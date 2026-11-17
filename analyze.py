@@ -97,6 +97,35 @@ def summarize(runs, tseq, p):
     }
 
 
+def gap_breakdown(s, tseq, p):
+    """Split T_p - T_seq/p into: slower per-process compute, imbalance and overhead."""
+    ideal = tseq / p
+    gap = s["Tp"] - ideal
+    parts = {"slower per-process compute": s["mean_local"] - ideal,
+             "load imbalance": s["imb_cost"],
+             "non-parallel overhead": s["overhead"]}
+    return ideal, gap, parts
+
+
+def gap_sentence(s, tseq, p):
+    ideal, gap, parts = gap_breakdown(s, tseq, p)
+    txt = "; ".join(f"{k} {v:.3f} s ({v / gap * 100:.0f}%)" for k, v in parts.items())
+    return (f"Decomposing the {gap:.3f} s gap between T_p and the ideal T_seq/p = {ideal:.3f} s: {txt}.")
+
+
+def gap_cause(s, tseq, p):
+    _, gap, parts = gap_breakdown(s, tseq, p)
+    k = max(parts, key=parts.get)
+    share = parts[k] / gap * 100
+    if k == "slower per-process compute":
+        return (f"most of the gap ({share:.0f}%) is that each process needs much more time than T_seq/p to count "
+                f"its share (contention for CPU cores, memory bandwidth and file-system I/O, and possibly more "
+                f"logical processors than physical cores), not communication or serial work, which are small")
+    if k == "load imbalance":
+        return f"most of the gap ({share:.0f}%) comes from load imbalance between processes"
+    return f"most of the gap ({share:.0f}%) comes from non-parallel overhead and communication"
+
+
 def build(data, tseq_list, p, runs_n):
     tseq = mean(tseq_list)
     S = {v: summarize(data[(v, p)], tseq, p) for v in ("mpi1", "mpi2") if data.get((v, p))}
@@ -182,7 +211,8 @@ def build(data, tseq_list, p, runs_n):
             f"- non-parallel overhead, T_p - max(t_i): {s1['overhead']:.3f} s "
             f"(MPI barrier, listing the directory and reading the query in rank 0, "
             f"broadcast, scatter, pickling and gathering of the partial counters, the merge in rank 0, and "
-            f"file-system metadata calls, which can be slow on folders shared with Docker on Windows/macOS).\n"
+            f"file-system metadata calls, which can be slow on folders shared with Docker on Windows/macOS).\n\n"
+            f"{gap_sentence(s1, tseq, p)} In other words, {gap_cause(s1, tseq, p)}.\n"
         )
         li_drop = (s1["LI"] - s2["LI"])
         t_change = (s2["Tp"] - s1["Tp"]) / s1["Tp"] * 100      # >0 means v2 is slower
@@ -238,10 +268,9 @@ def build(data, tseq_list, p, runs_n):
             f"p = {p} it reached S_p = {sb['Sp']:.2f} and E_p = {sb['Ep'] * 100:.0f}% with LI = {sb['LI']:.3f}, "
             f"compared with S_p = {so['Sp']:.2f}, E_p = {so['Ep'] * 100:.0f}% and LI = {so['LI']:.3f} "
             f"for the other one. {note} "
-            f"Neither version reaches the ideal speedup of {p}; the remaining gap comes from the sequential "
-            f"part and communication of the algorithm, resource contention on the machine and the residual "
-            f"imbalance, which means that further gains would need to attack I/O and overhead rather than "
-            f"only the distribution of files."
+            f"Neither version reaches the ideal speedup of {p}: for version 1, {gap_cause(s1, tseq, p)}. "
+            f"Further gains would therefore have to come from reducing contention and I/O cost per process "
+            f"rather than only from the distribution of files."
         )
         out["ANALYSIS_A"], out["ANALYSIS_B"], out["CONCLUSION"] = a5, b5, conc
     return out

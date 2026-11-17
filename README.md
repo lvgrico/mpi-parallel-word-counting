@@ -205,9 +205,11 @@ MPI version 2 results (p = 16):
 - cost of imbalance, max(t_i) - mean(t_i): 0.543 s (everyone waits for the slowest process);
 - non-parallel overhead, T_p - max(t_i): 0.030 s (MPI barrier, listing the directory and reading the query in rank 0, broadcast, scatter, pickling and gathering of the partial counters, the merge in rank 0, and file-system metadata calls, which can be slow on folders shared with Docker on Windows/macOS).
 
+Decomposing the 3.342 s gap between T_p and the ideal T_seq/p = 1.631 s: slower per-process compute 2.768 s (83%); load imbalance 0.543 s (16%); non-parallel overhead 0.030 s (1%). In other words, most of the gap (83%) is that each process needs much more time than T_seq/p to count its share (contention for CPU cores, memory bandwidth and file-system I/O, and possibly more logical processors than physical cores), not communication or serial work, which are small.
+
 <!-- /AUTO:ANALYSIS_A -->
 
-The gap to the ideal speedup is explained by the factors measured above and by structural reasons: (i) the sequential part of the program (listing the directory, reading the query, building blocks, merging counters in rank 0) does not shrink with `p` (Amdahl's law); (ii) the work is I/O-heavy and the processes share the same disk, page cache and memory bandwidth; (iii) if `p` is larger than the number of physical cores, processes compete for CPU; (iv) the slowest process determines the end of the program.
+Four things can separate a measured speedup from the ideal one: (i) the sequential part of the program (reading the query, listing the directory, building blocks, merging counters in rank 0), which does not shrink with `p` (Amdahl's law); (ii) the processes share the same disk, page cache and memory bandwidth, and the work is I/O-heavy; (iii) if `p` is larger than the number of physical cores, processes compete for CPU; and (iv) the slowest process determines the end of the program. The decomposition above shows which ones dominate here: a large "slower per-process compute" share points to (ii) and (iii), a large overhead share points to (i), and the imbalance share is (iv).
 
 ### 5b. Load balance
 
@@ -218,12 +220,15 @@ The gap to the ideal speedup is explained by the factors measured above and by s
 
 <!-- /AUTO:ANALYSIS_B -->
 
+*Caveat:* with only three runs per version, the gap between versions (about 0.4 s) is of the same order as the run-to-run variation of version 2 (its first run took 5.03 s, as fast as version 1). The result that version 2 is not faster is therefore suggestive rather than conclusive; what is solid is that balancing the local times (LI 1.12 → 1.02) did not produce a visible gain in total time.
+
 ### 5c. Limitations
 
 - **Single machine / container.** All "processes" share the same CPU cores, memory and disk, and run inside Docker (possibly inside a VM on Windows/macOS). Results show behaviour on one node and say nothing about distributed-memory clusters, where communication cost is much higher.
 - **Only one value of `p`.** The lab fixes `p` to the number reported by `Detectar_procesos_mpi`, so scalability (how S_p and E_p change with p) cannot be concluded.
 - **Few repetitions.** Three runs per configuration give a rough mean; the standard deviation is reported but is itself estimated from three samples. Small differences (a few percent) between versions cannot be considered significant.
-- **File-system overhead under Docker.** The dataset is a bind-mounted folder. On Docker Desktop for Windows/macOS, metadata calls (listing, `stat`, `getsize`) and file opens on bind mounts are much slower than on a native Linux disk, so I/O and metadata costs weigh more than they would on a cluster or a Linux host. This inflates `T_p - max(t_i)` and can hide the benefit of a better load balance.
+- **File-system overhead under Docker.** The dataset is a bind-mounted folder. On Docker Desktop for Windows/macOS, metadata calls (listing, `stat`, `getsize`) and file opens on bind mounts are much slower than on a native Linux disk, so I/O and metadata costs weigh more than they would on a cluster or a Linux host. In a first implementation, listing the files with one `os.path.isfile` call per file (3000 calls) and reading all sizes sequentially in rank 0 added about 4.6 s (v1) and 10.8 s (v2) of overhead on this setup, which made version 2 look 65% slower (9.7 s vs 16.0 s). Both were fixed (`os.scandir` for listing, sizes read in parallel by all ranks), which brought the overhead down to 0.03 s (v1) and 0.6 s (v2). This shows how strongly this environment penalises metadata calls, and the remaining differences between versions should be read with that in mind.
+- **The provided baseline uses per-file `stat` calls that the MPI versions avoid.** `baseline_secuencial.py` (unchanged, as required) calls `os.path.isfile` for each of the 3000 files, while the MPI versions list files with `os.scandir`. Since the first-run measurements suggest these calls cost several seconds on this Docker setup, `T_seq` includes a cost that the MPI versions do not pay, and the reported speedups are somewhat optimistic.
 - **Baseline measured once.** `run_all.sh` runs the sequential baseline a single time, so `T_seq` has no estimate of its own variability, and every speedup inherits that uncertainty.
 - **Disk cache.** After the first run the corpus is probably in the operating-system page cache, so I/O is cheaper than on a cold start and the first run of each experiment may be slower.
 - **Noise from other programs** on the host (browser, antivirus, background services) and CPU frequency scaling were not controlled.
@@ -236,5 +241,5 @@ Overall, these limitations do not change the qualitative conclusions (whether th
 ## 6. Conclusions
 
 <!-- AUTO:CONCLUSION -->
-For this problem and dataset I would recommend **MPI version 1** (equal file counts): with p = 16 it reached S_p = 5.25 and E_p = 33% with LI = 1.123, compared with S_p = 4.86, E_p = 30% and LI = 1.018 for the other one. A better LI alone did not pay off: the lower imbalance of the other version was not worth its extra overhead in this environment. Neither version reaches the ideal speedup of 16; the remaining gap comes from the sequential part and communication of the algorithm, resource contention on the machine and the residual imbalance, which means that further gains would need to attack I/O and overhead rather than only the distribution of files.
+For this problem and dataset I would recommend **MPI version 1** (equal file counts): with p = 16 it reached S_p = 5.25 and E_p = 33% with LI = 1.123, compared with S_p = 4.86, E_p = 30% and LI = 1.018 for the other one. A better LI alone did not pay off: the lower imbalance of the other version was not worth its extra overhead in this environment. Neither version reaches the ideal speedup of 16: for version 1, most of the gap (83%) is that each process needs much more time than T_seq/p to count its share (contention for CPU cores, memory bandwidth and file-system I/O, and possibly more logical processors than physical cores), not communication or serial work, which are small. Further gains would therefore have to come from reducing contention and I/O cost per process rather than only from the distribution of files.
 <!-- /AUTO:CONCLUSION -->
