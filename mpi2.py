@@ -3,12 +3,17 @@ MPI version 2: broadcast of the query + SIZE-AWARE (LPT) file distribution.
 
 Version 1 gives every process the same NUMBER of files, but the corpus has very
 heterogeneous file sizes (about 60% small, 30% medium, 10% large), so the work
-per process is uneven. Here rank 0 reads the size of every file (os.path.getsize,
-a cheap metadata call) and assigns files with the Longest-Processing-Time-first
-greedy heuristic: files are sorted by size (descending) and each one goes to the
-process with the smallest accumulated size so far. The assignment is still
-computed once, before processing starts, so there is no extra communication
-during the computation. Counting and gathering are identical to version 1.
+per process is uneven. Here files are assigned by size with the
+Longest-Processing-Time-first greedy heuristic: files are sorted by size
+(descending) and each one goes to the process with the smallest accumulated
+size so far.
+
+The size of every file comes from os.path.getsize (a metadata call). On some file
+systems (e.g. Docker bind mounts on Windows) these calls are slow, so each process
+reads the sizes of a round-robin slice of the files and rank 0 gathers them.
+The assignment is still computed once, before processing starts, so there is no
+extra communication during the computation. Counting and gathering are identical
+to version 1.
 
 Run:  mpirun -np <p> python mpi2.py
 """
@@ -34,19 +39,21 @@ def cargar_consulta(path, case_sensitive=False):
 
 
 def listar_archivos(dataset_dir):
-    files = [
-        f for f in os.listdir(dataset_dir)
-        if f.startswith("file_") and f.endswith(".txt")
-        and os.path.isfile(os.path.join(dataset_dir, f))
-    ]
-    return sorted(files)
+    """Names of the file_*.txt files. os.scandir reads the file type together
+    with the directory listing, so no extra stat() call per file is needed
+    (stat calls can be very slow on folders mounted into Docker on Windows/macOS)."""
+    names = []
+    with os.scandir(dataset_dir) as it:
+        for e in it:
+            if e.name.startswith("file_") and e.name.endswith(".txt") and e.is_file():
+                names.append(e.name)
+    return sorted(names)
 
 
-def partir_por_tamano(dataset_dir, files, p):
+def partir_por_tamano(sizes, p):
     """LPT greedy: biggest file first, always to the least-loaded process.
-    The cost of a file is approximated by its size in bytes."""
-    sizes = [(os.path.getsize(os.path.join(dataset_dir, f)), f) for f in files]
-    sizes.sort(key=lambda x: (-x[0], x[1]))
+    `sizes` is a list of (size_in_bytes, file_name); the size approximates the cost."""
+    sizes = sorted(sizes, key=lambda x: (-x[0], x[1]))
     heap = [(0, i) for i in range(p)]          # (accumulated bytes, process)
     heapq.heapify(heap)
     blocks = [[] for _ in range(p)]
@@ -95,18 +102,28 @@ def main():
     comm.Barrier()                      # common starting line for every process
     t_start = MPI.Wtime()
 
-    # 1) rank 0 reads the query, 3) lists the files and 4) builds the blocks
-    words, blocks = None, None
+    # 1) rank 0 reads the query and 3) lists the files
+    words, files = None, None
     if rank == 0:
         if not os.path.isdir(dataset_dir):
             print(f"Error: dataset folder not found: {dataset_dir}", flush=True)
             comm.Abort(1)
         words = sorted(cargar_consulta(os.path.join(dataset_dir, CONSULTA_NAME),
                                        CASE_SENSITIVE))
-        blocks = partir_por_tamano(dataset_dir, listar_archivos(dataset_dir), size)
+        files = listar_archivos(dataset_dir)
 
-    # 2) broadcast the query words; 4) static distribution of the files
+    # 2) broadcast the query words (and the file names)
     words = comm.bcast(words, root=0)
+    files = comm.bcast(files, root=0)
+
+    # file sizes: every process stats a round-robin slice, rank 0 gathers them
+    my_sizes = [(os.path.getsize(os.path.join(dataset_dir, f)), f) for f in files[rank::size]]
+    all_sizes = comm.gather(my_sizes, root=0)
+
+    # 4) rank 0 builds size-balanced blocks and distributes them statically
+    blocks = None
+    if rank == 0:
+        blocks = partir_por_tamano([x for part in all_sizes for x in part], size)
     my_files = comm.scatter(blocks, root=0)
     targets = set(words)
 

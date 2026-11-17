@@ -101,42 +101,42 @@ All numbers in this section were produced by `run_all.sh` and `analyze.py` (see 
 
 | Run | T_seq (s) |
 |---|---|
-| 1 | 27.4350 |
+| 1 | 26.0952 |
 
-**T_seq = 27.4350 s** (mean of 1 run(s)).
+**T_seq = 26.0952 s** (mean of 1 run(s)).
 
 #### 4b. MPI version 1 timing results (p = 16)
 
 | Run | Total time (s) | LI | Spread |
 |---|---|---|---|
-| 1 | 9.4280 | 1.130 | 0.250 |
-| 2 | 9.5204 | 1.132 | 0.244 |
-| 3 | 10.1446 | 1.133 | 0.269 |
+| 1 | 5.0523 | 1.123 | 0.261 |
+| 2 | 4.8509 | 1.124 | 0.246 |
+| 3 | 5.0148 | 1.123 | 0.243 |
 
-**T_p = 9.6977 s** (std 0.3898 s), **S_p = 2.829**, **E_p = 17.7%**. Output identical to the baseline in all runs: **True**.
+**T_p = 4.9726 s** (std 0.1071 s), **S_p = 5.248**, **E_p = 32.8%**. Output identical to the baseline in all runs: **True**.
 
 #### 4c. Load imbalance evidence (version 1, p = 16)
 
 | Rank | Assigned files | Mean local time (s) |
 |---|---|---|
-| 0 | 188 | 4.5927 |
-| 1 | 188 | 4.7791 |
-| 2 | 188 | 4.3435 |
-| 3 | 188 | 3.9610 |
-| 4 | 188 | 5.0910 |
-| 5 | 188 | 4.3086 |
-| 6 | 188 | 4.6311 |
-| 7 | 188 | 4.7434 |
-| 8 | 187 | 4.2068 |
-| 9 | 187 | 4.6023 |
-| 10 | 187 | 4.3647 |
-| 11 | 187 | 4.5192 |
-| 12 | 187 | 4.7890 |
-| 13 | 187 | 3.9537 |
-| 14 | 187 | 4.2697 |
-| 15 | 187 | 4.8227 |
+| 0 | 188 | 4.4943 |
+| 1 | 188 | 4.6855 |
+| 2 | 188 | 4.2569 |
+| 3 | 188 | 3.8552 |
+| 4 | 188 | 4.9426 |
+| 5 | 188 | 4.2449 |
+| 6 | 188 | 4.5251 |
+| 7 | 188 | 4.6317 |
+| 8 | 187 | 4.1163 |
+| 9 | 187 | 4.5229 |
+| 10 | 187 | 4.2786 |
+| 11 | 187 | 4.4293 |
+| 12 | 187 | 4.6771 |
+| 13 | 187 | 3.8567 |
+| 14 | 187 | 4.1699 |
+| 15 | 187 | 4.7026 |
 
-Mean local time over the processes: 4.4987 s. **LI = 1.132**, relative spread = 0.254 (mean over 3 runs of the per-run values).
+Mean local time over the processes: 4.3994 s. **LI = 1.123**, relative spread = 0.250 (mean over 3 runs of the per-run values).
 
 <!-- /AUTO:RESULTS -->
 
@@ -146,51 +146,51 @@ Version 1 balances the **number** of files, but processing time is roughly propo
 
 `mpi2.py` keeps everything from version 1 (broadcast of the query, local counting, gather and merge) and only changes how rank 0 builds the blocks before the `scatter`:
 
-1. rank 0 reads the size in bytes of every file with `os.path.getsize` (metadata only, the files are not read);
-2. files are sorted by size, largest first;
+1. the size in bytes of every file is read with `os.path.getsize` (metadata only, the files are not read). To keep this cheap, each process reads the sizes of a round-robin slice of the files and rank 0 gathers them;
+2. rank 0 sorts the files by size, largest first;
 3. each file is assigned to the process whose accumulated size is currently the smallest (greedy *Longest-Processing-Time-first*, implemented with a heap).
 
-LPT is a classic heuristic that keeps the difference between process loads on the order of the size of a single file, so the per-process work becomes almost equal even though the number of files per process may now differ. The assignment is still static, so no communication is added during the computation, and the cost is only O(n log n) on 3000 files in rank 0. Results of version 2:
+LPT is a classic heuristic that keeps the difference between process loads on the order of the size of a single file, so the per-process work becomes almost equal even though the number of files per process may now differ. The assignment is still static, so no communication is added during the computation, and the assignment itself costs only O(n log n) on 3000 files in rank 0. The time spent reading sizes and building the assignment is included in `T_p`, so it is paid for by version 2. Results of version 2:
 
 <!-- AUTO:RESULTS_D -->
 MPI version 2 results (p = 16):
 
 | Run | Total time (s) | LI | Spread |
 |---|---|---|---|
-| 1 | 15.5004 | 1.024 | 0.047 |
-| 2 | 15.6181 | 1.030 | 0.041 |
-| 3 | 16.8443 | 1.014 | 0.034 |
+| 1 | 5.0299 | 1.019 | 0.039 |
+| 2 | 5.5855 | 1.021 | 0.045 |
+| 3 | 5.5094 | 1.014 | 0.031 |
 
 | Rank | Assigned files | Mean local time (s) |
 |---|---|---|
-| 0 | 189 | 5.0789 |
-| 1 | 188 | 5.0207 |
-| 2 | 188 | 5.0346 |
-| 3 | 186 | 5.0378 |
-| 4 | 187 | 5.0098 |
-| 5 | 188 | 5.0245 |
-| 6 | 188 | 4.9598 |
-| 7 | 187 | 5.0188 |
-| 8 | 187 | 5.0108 |
-| 9 | 188 | 4.9965 |
-| 10 | 187 | 4.9698 |
-| 11 | 187 | 4.9976 |
-| 12 | 188 | 4.9926 |
-| 13 | 187 | 5.0148 |
-| 14 | 188 | 5.0976 |
-| 15 | 187 | 5.0158 |
+| 0 | 189 | 4.7258 |
+| 1 | 188 | 4.6881 |
+| 2 | 188 | 4.6501 |
+| 3 | 186 | 4.6229 |
+| 4 | 187 | 4.6970 |
+| 5 | 188 | 4.6288 |
+| 6 | 188 | 4.6407 |
+| 7 | 187 | 4.7018 |
+| 8 | 187 | 4.6464 |
+| 9 | 188 | 4.7366 |
+| 10 | 187 | 4.6991 |
+| 11 | 187 | 4.6787 |
+| 12 | 188 | 4.7077 |
+| 13 | 187 | 4.6547 |
+| 14 | 188 | 4.6636 |
+| 15 | 187 | 4.6855 |
 
-**T_p = 15.9876 s** (std 0.7443 s), **S_p = 1.716**, **E_p = 10.7%**, **LI = 1.023**. Output identical to the baseline in all runs: **True**.
+**T_p = 5.3749 s** (std 0.3012 s), **S_p = 4.855**, **E_p = 30.3%**, **LI = 1.018**. Output identical to the baseline in all runs: **True**.
 
 **Comparison (p = 16):**
 
 | Metric | Sequential | MPI v1 | MPI v2 |
 |---|---|---|---|
-| Total time T (s) | 27.4350 | 9.6977 | 15.9876 |
-| Speedup S_p | 1.000 | 2.829 | 1.716 |
-| Efficiency E_p | - | 17.7% | 10.7% |
-| Load imbalance LI | - | 1.132 | 1.023 |
-| Relative spread | - | 0.254 | 0.041 |
+| Total time T (s) | 26.0952 | 4.9726 | 5.3749 |
+| Speedup S_p | 1.000 | 5.248 | 4.855 |
+| Efficiency E_p | - | 32.8% | 30.3% |
+| Load imbalance LI | - | 1.123 | 1.018 |
+| Relative spread | - | 0.250 | 0.038 |
 
 <!-- /AUTO:RESULTS_D -->
 
@@ -199,11 +199,11 @@ MPI version 2 results (p = 16):
 ### 5a. Parallel performance
 
 <!-- AUTO:ANALYSIS_A -->
-**Version 1 improved on the sequential baseline.** With p = 16 it took T_p = 9.698 s against T_seq = 27.435 s, a speedup of S_p = 2.83 versus the ideal 16 (efficiency 18%). The ideal time would have been T_seq/p = 1.715 s, so 7.983 s are unexplained by perfect scaling. Using the logs, the total time of version 1 splits as:
+**Version 1 improved on the sequential baseline.** With p = 16 it took T_p = 4.973 s against T_seq = 26.095 s, a speedup of S_p = 5.25 versus the ideal 16 (efficiency 33%). The ideal time would have been T_seq/p = 1.631 s, so 3.342 s are unexplained by perfect scaling. Using the logs, the total time of version 1 splits as:
 
-- mean local compute time per process: 4.499 s (higher than T_seq/p = 1.715 s: the difference reflects contention for CPU, memory and disk when p processes read files at the same time);
-- cost of imbalance, max(t_i) - mean(t_i): 0.592 s (everyone waits for the slowest process);
-- non-parallel overhead, T_p - max(t_i): 4.607 s (MPI start-up/barrier, listing the directory and reading the query in rank 0, broadcast, scatter, pickling and gathering of the partial counters, and the merge in rank 0).
+- mean local compute time per process: 4.399 s (higher than T_seq/p = 1.631 s: the difference reflects contention for CPU, memory and disk when p processes read files at the same time);
+- cost of imbalance, max(t_i) - mean(t_i): 0.543 s (everyone waits for the slowest process);
+- non-parallel overhead, T_p - max(t_i): 0.030 s (MPI barrier, listing the directory and reading the query in rank 0, broadcast, scatter, pickling and gathering of the partial counters, the merge in rank 0, and file-system metadata calls, which can be slow on folders shared with Docker on Windows/macOS).
 
 <!-- /AUTO:ANALYSIS_A -->
 
@@ -212,9 +212,9 @@ The gap to the ideal speedup is explained by the factors measured above and by s
 ### 5b. Load balance
 
 <!-- AUTO:ANALYSIS_B -->
-**Evidence in version 1.** Every process received the same number of files, but the local times in table 4c range from 3.954 s to 5.091 s, giving LI = 1.132 (spread 0.254). The cause is that the corpus has files of very different size (about 60% small, 30% medium, 10% large), so equal file counts are not equal work, and the total time is set by the slowest process.
+**Evidence in version 1.** Every process received the same number of files, but the local times in table 4c range from 3.855 s to 4.943 s, giving LI = 1.123 (spread 0.250). The cause is that the corpus has files of very different size (about 60% small, 30% medium, 10% large), so equal file counts are not equal work, and the total time is set by the slowest process.
 
-**Effect of version 2.** Assigning files by size (LPT) changed LI from 1.132 to 1.023 (reduction of 0.109) and T_p from 9.698 s to 15.988 s (-64.9% time change; S_p 2.83 -> 1.72, E_p 18% -> 11%). **The improvement is not clearly real**: the difference between the mean total times is within the run-to-run noise (standard deviation) or below 2% of T_p, so with this experiment it cannot be told apart from measurement variation. The maximum possible gain from balancing is bounded by the imbalance cost of version 1 (0.592 s), which is 6.1% of its total time.
+**Effect of version 2.** Assigning files by size (LPT) changed LI from 1.123 to 1.018 (reduction of 0.105) and T_p from 4.973 s to 5.375 s (+8.1% change in total time; S_p 5.25 -> 4.86, E_p 33% -> 30%). **Version 2 was slower than version 1, even though its LI is lower.** The difference is larger than the run-to-run noise, so balancing the local times did not translate into a better total time. Comparing T_p - max(t_i) of both versions (overhead 0.030 s in v1 vs 0.614 s in v2) shows where the time went: the extra work that version 2 does outside the counting loop (reading file sizes, gathering them and building the assignment) cost more than the 0.459 s of imbalance it removed. The maximum possible gain from balancing is bounded by the imbalance cost of version 1 (0.543 s), which is 10.9% of its total time.
 
 <!-- /AUTO:ANALYSIS_B -->
 
@@ -223,6 +223,8 @@ The gap to the ideal speedup is explained by the factors measured above and by s
 - **Single machine / container.** All "processes" share the same CPU cores, memory and disk, and run inside Docker (possibly inside a VM on Windows/macOS). Results show behaviour on one node and say nothing about distributed-memory clusters, where communication cost is much higher.
 - **Only one value of `p`.** The lab fixes `p` to the number reported by `Detectar_procesos_mpi`, so scalability (how S_p and E_p change with p) cannot be concluded.
 - **Few repetitions.** Three runs per configuration give a rough mean; the standard deviation is reported but is itself estimated from three samples. Small differences (a few percent) between versions cannot be considered significant.
+- **File-system overhead under Docker.** The dataset is a bind-mounted folder. On Docker Desktop for Windows/macOS, metadata calls (listing, `stat`, `getsize`) and file opens on bind mounts are much slower than on a native Linux disk, so I/O and metadata costs weigh more than they would on a cluster or a Linux host. This inflates `T_p - max(t_i)` and can hide the benefit of a better load balance.
+- **Baseline measured once.** `run_all.sh` runs the sequential baseline a single time, so `T_seq` has no estimate of its own variability, and every speedup inherits that uncertainty.
 - **Disk cache.** After the first run the corpus is probably in the operating-system page cache, so I/O is cheaper than on a cold start and the first run of each experiment may be slower.
 - **Noise from other programs** on the host (browser, antivirus, background services) and CPU frequency scaling were not controlled.
 - **One dataset.** The data are synthetic and generated with a fixed seed; the size distribution (60/30/10 %) was designed to create imbalance. Real corpora may be more or less skewed.
@@ -234,5 +236,5 @@ Overall, these limitations do not change the qualitative conclusions (whether th
 ## 6. Conclusions
 
 <!-- AUTO:CONCLUSION -->
-For this problem and dataset I would recommend **MPI version 1** (equal file counts): with p = 16 it reached S_p = 2.83 and E_p = 18% with LI = 1.132, compared with S_p = 1.72, E_p = 11% and LI = 1.023 for the other one. The gain is small relative to the noise, so the choice is justified mostly by the fact that version 2 is not slower and costs only a few getsize calls. Neither version reaches the ideal speedup of 16; the remaining gap comes from the sequential part and communication of the algorithm, resource contention on the machine and the residual imbalance, which means that further gains would need to attack I/O and overhead rather than only the distribution of files.
+For this problem and dataset I would recommend **MPI version 1** (equal file counts): with p = 16 it reached S_p = 5.25 and E_p = 33% with LI = 1.123, compared with S_p = 4.86, E_p = 30% and LI = 1.018 for the other one. A better LI alone did not pay off: the lower imbalance of the other version was not worth its extra overhead in this environment. Neither version reaches the ideal speedup of 16; the remaining gap comes from the sequential part and communication of the algorithm, resource contention on the machine and the residual imbalance, which means that further gains would need to attack I/O and overhead rather than only the distribution of files.
 <!-- /AUTO:CONCLUSION -->

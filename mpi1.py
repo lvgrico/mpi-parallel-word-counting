@@ -29,12 +29,15 @@ def cargar_consulta(path, case_sensitive=False):
 
 
 def listar_archivos(dataset_dir):
-    files = [
-        f for f in os.listdir(dataset_dir)
-        if f.startswith("file_") and f.endswith(".txt")
-        and os.path.isfile(os.path.join(dataset_dir, f))
-    ]
-    return sorted(files)
+    """Names of the file_*.txt files. os.scandir reads the file type together
+    with the directory listing, so no extra stat() call per file is needed
+    (stat calls can be very slow on folders mounted into Docker on Windows/macOS)."""
+    names = []
+    with os.scandir(dataset_dir) as it:
+        for e in it:
+            if e.name.startswith("file_") and e.name.endswith(".txt") and e.is_file():
+                names.append(e.name)
+    return sorted(names)
 
 
 def partir_por_cantidad(items, p):

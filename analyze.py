@@ -180,19 +180,33 @@ def build(data, tseq_list, p, runs_n):
             f"- cost of imbalance, max(t_i) - mean(t_i): {s1['imb_cost']:.3f} s "
             f"(everyone waits for the slowest process);\n"
             f"- non-parallel overhead, T_p - max(t_i): {s1['overhead']:.3f} s "
-            f"(MPI start-up/barrier, listing the directory and reading the query in rank 0, "
-            f"broadcast, scatter, pickling and gathering of the partial counters, and the merge in rank 0).\n"
+            f"(MPI barrier, listing the directory and reading the query in rank 0, "
+            f"broadcast, scatter, pickling and gathering of the partial counters, the merge in rank 0, and "
+            f"file-system metadata calls, which can be slow on folders shared with Docker on Windows/macOS).\n"
         )
         li_drop = (s1["LI"] - s2["LI"])
-        t_gain = (s1["Tp"] - s2["Tp"]) / s1["Tp"] * 100
+        t_change = (s2["Tp"] - s1["Tp"]) / s1["Tp"] * 100      # >0 means v2 is slower
         noise = max(s1["sd"], s2["sd"])
-        real = (s1["Tp"] - s2["Tp"]) > max(noise, 0.02 * s1["Tp"])
-        verdict = ("**Yes, this is a real improvement**: the reduction of the mean total time is larger than "
-                   "the run-to-run standard deviation and than 2% of T_p."
-                   if real else
-                   "**The improvement is not clearly real**: the difference between the mean total times is "
-                   "within the run-to-run noise (standard deviation) or below 2% of T_p, so with this "
-                   "experiment it cannot be told apart from measurement variation.")
+        diff = s1["Tp"] - s2["Tp"]                             # >0 means v2 is faster
+        thr = max(noise, 0.02 * s1["Tp"])
+        if diff > thr:
+            state = "faster"
+            verdict = ("**Version 2 was faster, and this is a real improvement**: the reduction of the mean "
+                       "total time is larger than the run-to-run standard deviation and than 2% of T_p.")
+        elif diff < -thr:
+            state = "slower"
+            verdict = ("**Version 2 was slower than version 1, even though its LI is lower.** The difference "
+                       "is larger than the run-to-run noise, so balancing the local times did not translate "
+                       "into a better total time. Comparing T_p - max(t_i) of both versions (overhead "
+                       f"{s1['overhead']:.3f} s in v1 vs {s2['overhead']:.3f} s in v2) shows where the time "
+                       "went: the extra work that version 2 does outside the counting loop (reading file "
+                       "sizes, gathering them and building the assignment) cost more than the "
+                       f"{s1['imb_cost'] - s2['imb_cost']:.3f} s of imbalance it removed.")
+        else:
+            state = "same"
+            verdict = ("**The difference is not clearly real**: the difference between the mean total times is "
+                       "within the run-to-run noise (standard deviation) or below 2% of T_p, so with this "
+                       "experiment it cannot be told apart from measurement variation.")
         b5 = (
             f"**Evidence in version 1.** Every process received the same number of files, but the local times "
             f"in table 4c range from {min(t for _, t in s1['mean_ranks'].values()):.3f} s to "
@@ -202,22 +216,28 @@ def build(data, tseq_list, p, runs_n):
             f"time is set by the slowest process.\n\n"
             f"**Effect of version 2.** Assigning files by size (LPT) changed LI from {s1['LI']:.3f} to "
             f"{s2['LI']:.3f} (reduction of {li_drop:.3f}) and T_p from {s1['Tp']:.3f} s to {s2['Tp']:.3f} s "
-            f"({t_gain:+.1f}% time change; S_p {s1['Sp']:.2f} -> {s2['Sp']:.2f}, "
+            f"({t_change:+.1f}% change in total time; S_p {s1['Sp']:.2f} -> {s2['Sp']:.2f}, "
             f"E_p {s1['Ep'] * 100:.0f}% -> {s2['Ep'] * 100:.0f}%). {verdict} "
             f"The maximum possible gain from balancing is bounded by the imbalance cost of version 1 "
             f"({s1['imb_cost']:.3f} s), which is "
             f"{s1['imb_cost'] / s1['Tp'] * 100:.1f}% of its total time.\n"
         )
         best = "MPI version 2" if s2["Tp"] < s1["Tp"] else "MPI version 1"
-        sb = s2 if best == "MPI version 2" else s1
+        sb, so = (s2, s1) if best == "MPI version 2" else (s1, s2)
+        if state == "same":
+            note = ("The difference between the versions is within the measurement noise, so the choice is "
+                    "weak; version 2 gives the better balance, while version 1 is simpler.")
+        elif best == "MPI version 2":
+            note = "The difference exceeds the measurement noise."
+        else:
+            note = ("A better LI alone did not pay off: the lower imbalance of the other version was not "
+                    "worth its extra overhead in this environment.")
         conc = (
             f"For this problem and dataset I would recommend **{best}**"
             f"{' (size-aware static distribution)' if best == 'MPI version 2' else ' (equal file counts)'}: with "
             f"p = {p} it reached S_p = {sb['Sp']:.2f} and E_p = {sb['Ep'] * 100:.0f}% with LI = {sb['LI']:.3f}, "
-            f"compared with S_p = {(s1 if best == 'MPI version 2' else s2)['Sp']:.2f}, "
-            f"E_p = {(s1 if best == 'MPI version 2' else s2)['Ep'] * 100:.0f}% and "
-            f"LI = {(s1 if best == 'MPI version 2' else s2)['LI']:.3f} for the other one. "
-            f"{'The gain is small relative to the noise, so the choice is justified mostly by the fact that version 2 is not slower and costs only a few getsize calls.' if not real else 'The difference exceeds the measurement noise.'} "
+            f"compared with S_p = {so['Sp']:.2f}, E_p = {so['Ep'] * 100:.0f}% and LI = {so['LI']:.3f} "
+            f"for the other one. {note} "
             f"Neither version reaches the ideal speedup of {p}; the remaining gap comes from the sequential "
             f"part and communication of the algorithm, resource contention on the machine and the residual "
             f"imbalance, which means that further gains would need to attack I/O and overhead rather than "
